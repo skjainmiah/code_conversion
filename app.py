@@ -591,66 +591,82 @@ with tab_convert:
                 st.warning("Set your X-API-KEY in the sidebar to convert.", icon="🔑")
             else:
                 if st.button("🚀 Convert with AI", type="primary", use_container_width=True):
-                    with st.spinner("Converting with AI... This may take 15–30 seconds."):
-                        try:
-                            # Prepare imported files context
-                            imported_context = [
-                                {"path": imp, "content": project_files[imp]}
-                                for imp in imports
-                            ]
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    status_text.text("Preparing conversion...")
 
-                            converted_code = convert_file(
-                                api_url=st.session_state.api_url,
-                                api_key=st.session_state.api_key,
-                                model=st.session_state.model_name,
-                                file_path=selected_fp,
-                                file_content=project_files[selected_fp],
-                                target_layer=target_layer,
-                                imported_files=imported_context,
-                            )
+                    try:
+                        # Prepare imported files context
+                        imported_context = [
+                            {"path": imp, "content": project_files[imp]}
+                            for imp in imports
+                        ]
 
-                            # Validate
-                            issues = validate_conversion(converted_code)
+                        def update_progress(section_num, total_sections, section_name):
+                            pct = int(section_num / total_sections * 100)
+                            progress_bar.progress(pct)
+                            if total_sections == 1:
+                                status_text.text("Converting full file...")
+                            else:
+                                status_text.text(f"Converting section {section_num}/{total_sections}: {section_name}...")
 
-                            # Store result
-                            conv_id = str(uuid.uuid4())
-                            pid = st.session_state.active_project
-                            if pid not in st.session_state.conversions:
-                                st.session_state.conversions[pid] = {}
+                        converted_code = convert_file(
+                            api_url=st.session_state.api_url,
+                            api_key=st.session_state.api_key,
+                            model=st.session_state.model_name,
+                            file_path=selected_fp,
+                            file_content=project_files[selected_fp],
+                            target_layer=target_layer,
+                            imported_files=imported_context,
+                            progress_callback=update_progress,
+                        )
+                        progress_bar.progress(100)
+                        status_text.text("Conversion complete!")
 
-                            st.session_state.conversions[pid][conv_id] = {
-                                "id": conv_id,
-                                "file_path": selected_fp,
-                                "target_layer": target_layer,
-                                "original_code": project_files[selected_fp],
-                                "converted_code": converted_code,
-                                "status": "done",
-                                "issues": issues,
-                                "imported_files": imports,
-                                "converted_at": datetime.now().isoformat(),
-                            }
+                        # Validate
+                        issues = validate_conversion(converted_code)
 
-                            st.success(f"Conversion complete! {len(issues)} issue(s) found.")
+                        # Store result
+                        conv_id = str(uuid.uuid4())
+                        pid = st.session_state.active_project
+                        if pid not in st.session_state.conversions:
+                            st.session_state.conversions[pid] = {}
 
-                        except Exception as e:
-                            st.error(f"Conversion failed: {e}")
-                            # Store error
-                            conv_id = str(uuid.uuid4())
-                            pid = st.session_state.active_project
-                            if pid not in st.session_state.conversions:
-                                st.session_state.conversions[pid] = {}
-                            st.session_state.conversions[pid][conv_id] = {
-                                "id": conv_id,
-                                "file_path": selected_fp,
-                                "target_layer": target_layer,
-                                "original_code": project_files[selected_fp],
-                                "converted_code": "",
-                                "status": "error",
-                                "issues": [],
-                                "imported_files": imports,
-                                "error": str(e),
-                                "converted_at": datetime.now().isoformat(),
-                            }
+                        st.session_state.conversions[pid][conv_id] = {
+                            "id": conv_id,
+                            "file_path": selected_fp,
+                            "target_layer": target_layer,
+                            "original_code": project_files[selected_fp],
+                            "converted_code": converted_code,
+                            "status": "done",
+                            "issues": issues,
+                            "imported_files": imports,
+                            "converted_at": datetime.now().isoformat(),
+                        }
+
+                        st.success(f"Conversion complete! {len(issues)} issue(s) found.")
+
+                    except Exception as e:
+                        progress_bar.empty()
+                        status_text.empty()
+                        st.error(f"Conversion failed: {e}")
+                        # Store error
+                        conv_id = str(uuid.uuid4())
+                        pid = st.session_state.active_project
+                        if pid not in st.session_state.conversions:
+                            st.session_state.conversions[pid] = {}
+                        st.session_state.conversions[pid][conv_id] = {
+                            "id": conv_id,
+                            "file_path": selected_fp,
+                            "target_layer": target_layer,
+                            "original_code": project_files[selected_fp],
+                            "converted_code": "",
+                            "status": "error",
+                            "issues": [],
+                            "imported_files": imports,
+                            "error": str(e),
+                            "converted_at": datetime.now().isoformat(),
+                        }
 
             # Show latest result for selected file
             convs = get_project_conversions()

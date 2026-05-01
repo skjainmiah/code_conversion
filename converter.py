@@ -1,23 +1,20 @@
-"""Converter — calls LLM API for Foundry to Databricks conversion."""
+"""Converter — calls LLM API for Foundry to Databricks conversion.
 
+Handles large files by splitting into logical sections (function/class boundaries),
+converting each section separately with shared context, and reassembling.
+"""
+
+import re
 import requests
 from prompts import build_conversion_prompt, build_chat_prompt
 
+# Approx 1 token = 4 chars. Stay under safe limits.
+MAX_LINES_SINGLE_SHOT = 200  # ~800 tokens of code — safe for single conversion
+SECTION_TARGET_LINES = 150   # Target size per section in chunked mode
+
 
 def call_llm(api_url: str, api_key: str, model: str, system_prompt: str, user_message: str, max_tokens: int = 4096) -> str:
-    """Call the LLM Router API (OpenAI-compatible chat completions).
-
-    Args:
-        api_url: LLM Router endpoint URL
-        api_key: X-API-KEY for authentication
-        model: Model name to use
-        system_prompt: System instructions
-        user_message: User's message
-        max_tokens: Maximum tokens in response
-
-    Returns:
-        LLM response text
-    """
+    """Call the LLM Router API (OpenAI-compatible chat completions)."""
     headers = {
         "Content-Type": "application/json",
         "X-API-KEY": api_key,
@@ -34,26 +31,14 @@ def call_llm(api_url: str, api_key: str, model: str, system_prompt: str, user_me
         "max_tokens": max_tokens,
     }
 
-    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    response = requests.post(api_url, headers=headers, json=payload, timeout=180)
     response.raise_for_status()
     data = response.json()
     return data["choices"][0]["message"]["content"]
 
 
 def call_llm_with_history(api_url: str, api_key: str, model: str, system_prompt: str, messages: list, max_tokens: int = 4096) -> str:
-    """Call the LLM Router API with conversation history.
-
-    Args:
-        api_url: LLM Router endpoint URL
-        api_key: X-API-KEY for authentication
-        model: Model name to use
-        system_prompt: System instructions
-        messages: List of {"role": ..., "content": ...} messages
-        max_tokens: Maximum tokens in response
-
-    Returns:
-        LLM response text
-    """
+    """Call the LLM Router API with conversation history."""
     headers = {
         "Content-Type": "application/json",
         "X-API-KEY": api_key,
@@ -69,10 +54,132 @@ def call_llm_with_history(api_url: str, api_key: str, model: str, system_prompt:
         "max_tokens": max_tokens,
     }
 
-    response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+    response = requests.post(api_url, headers=headers, json=payload, timeout=180)
     response.raise_for_status()
     data = response.json()
     return data["choices"][0]["message"]["content"]
+
+
+def _extract_code(text: str) -> str:
+    """Extract Python code from LLM response, stripping markdown fences."""
+    if "```python" in text:
+        try:
+            start = text.index("```python") + len("```python\n")
+            end = text.index("```", start)
+            return text[start:end].strip()
+        except ValueError:
+            pass
+    elif "```" in text:
+        try:
+            start = text.index("```") + len("```\n")
+            end = text.index("```", start)
+            return text[start:end].strip()
+        except ValueError:
+            pass
+    return text.strip()
+
+
+# ─── Section Splitting ──────────────────────────────────────────────────────────
+
+
+def _split_into_sections(content: str) -> list[dict]:
+    """Split a Python file into logical sections at function/class boundaries.
+
+    Returns list of {"name": str, "code": str, "start_line": int, "end_line": int}
+    """
+    lines = content.split("\n")
+    total_lines = len(lines)
+
+    if total_lines <= MAX_LINES_SINGLE_SHOT:
+        return [{"name": "full_file", "code": content, "start_line": 1, "end_line": total_lines}]
+
+    # Find all top-level def/class boundaries
+    boundaries = []
+    for i, line in enumerate(lines):
+        if re.match(r"^(def |class |@transform|@configure)", line):
+            boundaries.append(i)
+
+    if not boundaries:
+        # No function/class boundaries — split by fixed line count
+        return _split_by_lines(lines, SECTION_TARGET_LINES)
+
+    # Build sections: imports/header + each function/class block
+    sections = []
+
+    # Section 0: Everything before the first function/class (imports, constants)
+    if boundaries[0] > 0:
+        header_lines = lines[: boundaries[0]]
+        # Also include any decorators above the first boundary
+        sections.append({
+            "name": "imports_and_constants",
+            "code": "\n".join(header_lines),
+            "start_line": 1,
+            "end_line": boundaries[0],
+        })
+
+    # Remaining sections: each function/class block
+    for idx, start in enumerate(boundaries):
+        end = boundaries[idx + 1] if idx + 1 < len(boundaries) else total_lines
+
+        # Walk backwards from `end` to include decorators for the next block
+        actual_end = end
+        if idx + 1 < len(boundaries):
+            # Check if lines before next boundary are decorators
+            j = end - 1
+            while j > start and lines[j].strip() == "":
+                j -= 1
+            actual_end = j + 1
+
+        section_lines = lines[start:actual_end]
+        func_name = _extract_func_name(lines[start])
+
+        sections.append({
+            "name": func_name or f"section_{idx + 1}",
+            "code": "\n".join(section_lines),
+            "start_line": start + 1,
+            "end_line": actual_end,
+        })
+
+    # Merge very small sections (< 10 lines) into their neighbour
+    merged = []
+    for s in sections:
+        line_count = s["end_line"] - s["start_line"] + 1
+        if merged and line_count < 10:
+            merged[-1]["code"] += "\n\n" + s["code"]
+            merged[-1]["end_line"] = s["end_line"]
+            merged[-1]["name"] += f"+{s['name']}"
+        else:
+            merged.append(s)
+
+    return merged
+
+
+def _split_by_lines(lines: list[str], chunk_size: int) -> list[dict]:
+    """Fallback: split into fixed-size line chunks."""
+    sections = []
+    for i in range(0, len(lines), chunk_size):
+        chunk = lines[i : i + chunk_size]
+        sections.append({
+            "name": f"lines_{i + 1}_to_{min(i + chunk_size, len(lines))}",
+            "code": "\n".join(chunk),
+            "start_line": i + 1,
+            "end_line": min(i + chunk_size, len(lines)),
+        })
+    return sections
+
+
+def _extract_func_name(line: str) -> str:
+    """Extract function or class name from a definition line."""
+    m = re.match(r"^def\s+(\w+)", line)
+    if m:
+        return m.group(1)
+    m = re.match(r"^class\s+(\w+)", line)
+    if m:
+        return m.group(1)
+    return ""
+
+
+# ─── Main Convert Function ──────────────────────────────────────────────────────
 
 
 def convert_file(
@@ -83,8 +190,14 @@ def convert_file(
     file_content: str,
     target_layer: str,
     imported_files: list[dict],
+    progress_callback=None,
 ) -> str:
     """Convert a Foundry Python file to a Databricks notebook using LLM.
+
+    For small files (<=200 lines): sends the full file in one API call.
+    For large files (>200 lines): splits into logical sections (by function/class
+    boundaries), converts each section with shared context (imports + mapping rules),
+    and reassembles into a complete notebook.
 
     Args:
         api_url: LLM Router endpoint URL
@@ -94,26 +207,79 @@ def convert_file(
         file_content: Source code content
         target_layer: bronze / silver / gold
         imported_files: List of {"path": str, "content": str} for cross-file context
+        progress_callback: Optional callable(section_num, total_sections, section_name)
 
     Returns:
         Converted Databricks notebook code
     """
+    sections = _split_into_sections(file_content)
     system_prompt = build_conversion_prompt(target_layer, imported_files)
-    user_message = f"Convert the following Foundry Python transform file to a Databricks notebook.\n\nFile: {file_path}\n\n```python\n{file_content}\n```"
 
-    text = call_llm(api_url, api_key, model, system_prompt, user_message, max_tokens=8192)
+    # ── Single-shot: file fits in one call ──
+    if len(sections) == 1 and sections[0]["name"] == "full_file":
+        if progress_callback:
+            progress_callback(1, 1, "full file")
 
-    # Extract code from markdown block if present
-    if "```python" in text:
-        start = text.index("```python") + len("```python\n")
-        end = text.index("```", start)
-        return text[start:end].strip()
-    elif "```" in text:
-        start = text.index("```") + len("```\n")
-        end = text.index("```", start)
-        return text[start:end].strip()
+        user_message = (
+            f"Convert the following Foundry Python transform file to a Databricks notebook.\n\n"
+            f"File: {file_path}\n\n```python\n{file_content}\n```"
+        )
+        text = call_llm(api_url, api_key, model, system_prompt, user_message, max_tokens=8192)
+        return _extract_code(text)
 
-    return text.strip()
+    # ── Chunked conversion: large file ──
+    total = len(sections)
+    converted_sections = []
+
+    # Extract imports section for shared context
+    imports_section = ""
+    if sections and sections[0]["name"] == "imports_and_constants":
+        imports_section = sections[0]["code"]
+
+    for i, section in enumerate(sections):
+        if progress_callback:
+            progress_callback(i + 1, total, section["name"])
+
+        if section["name"] == "imports_and_constants":
+            # Convert the imports/header section
+            user_message = (
+                f"Convert ONLY the imports and constants section of this Foundry file to Databricks format.\n"
+                f"This is section 1 of {total} from file: {file_path}\n"
+                f"Replace Foundry imports with PySpark equivalents. Keep all constants.\n"
+                f"Add the Databricks notebook header cell.\n\n"
+                f"```python\n{section['code']}\n```"
+            )
+        else:
+            # Convert a function/logic section — include imports as context
+            user_message = (
+                f"Convert ONLY the following section of a Foundry Python file to Databricks format.\n"
+                f"This is section {i + 1} of {total} from file: {file_path} "
+                f"(lines {section['start_line']}–{section['end_line']}).\n"
+                f"Section name: {section['name']}\n\n"
+                f"IMPORTANT:\n"
+                f"- Convert ONLY this section, not the whole file\n"
+                f"- Do NOT add imports or headers (already handled in section 1)\n"
+                f"- Do NOT add notebook header or validation cells\n"
+                f"- Separate cells with '# COMMAND ----------'\n"
+                f"- Preserve ALL business logic exactly\n\n"
+            )
+            if imports_section:
+                user_message += f"For reference, the file's imports are:\n```python\n{imports_section}\n```\n\n"
+
+            user_message += f"Section to convert:\n```python\n{section['code']}\n```"
+
+        text = call_llm(api_url, api_key, model, system_prompt, user_message, max_tokens=4096)
+        converted_sections.append(_extract_code(text))
+
+    # Reassemble: join all sections with COMMAND separators
+    assembled = "\n\n# COMMAND ----------\n\n".join(converted_sections)
+
+    # Add validation cell at the end if not already present
+    if "print(" not in converted_sections[-1].lower():
+        assembled += "\n\n# COMMAND ----------\n\n"
+        assembled += '# Validation\nprint(f"Conversion complete for: {file_path}")\n'
+
+    return assembled
 
 
 def chat_with_code(
@@ -124,19 +290,7 @@ def chat_with_code(
     chunks: list,
     history: list[dict],
 ) -> str:
-    """RAG-powered chat about uploaded code.
-
-    Args:
-        api_url: LLM Router endpoint URL
-        api_key: X-API-KEY for authentication
-        model: Model name
-        message: User's question
-        chunks: Relevant code chunks from RAG retrieval
-        history: Previous conversation messages
-
-    Returns:
-        Assistant's response
-    """
+    """RAG-powered chat about uploaded code."""
     system_prompt = build_chat_prompt(chunks)
     messages = history + [{"role": "user", "content": message}]
 
