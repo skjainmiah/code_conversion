@@ -1,16 +1,22 @@
 """UAL Code Converter — Foundry to Databricks Migration Tool (Streamlit App)."""
 
 import io
+import os
 import uuid
 import zipfile
 from datetime import datetime
 
 import streamlit as st
+from dotenv import load_dotenv
 
 from rag_engine import KeywordIndex, chunk_file
 from import_resolver import resolve_imports, build_dependency_graph
 from converter import convert_file, chat_with_code
 from validator import validate_conversion
+
+# Load .env if present
+load_dotenv(override=True)
+config = os.environ
 
 # ─── Page Config ────────────────────────────────────────────────────────────────
 
@@ -75,7 +81,9 @@ def init_state():
         "files": {},  # project_id -> {file_path -> {id, content, file_name}}
         "indexes": {},  # project_id -> KeywordIndex instance
         "conversions": {},  # project_id -> {conv_id -> {result dict}}
-        "api_key": "",
+        "api_url": config.get("API_URL", "https://quasarmarket.coforge.com/qag/llmrouter-api/v2/chat/completions"),
+        "api_key": config.get("API_KEY", ""),
+        "model_name": config.get("MODEL_NAME", "gpt-5-2"),
         "chat_history": [],  # list of {role, content}
         "uploaded_file_keys": set(),  # track already-processed uploads
     }
@@ -140,19 +148,37 @@ with st.sidebar:
     st.caption("Foundry → Databricks Migration")
     st.divider()
 
-    # API Key
+    # LLM API Config
+    api_url = st.text_input(
+        "🌐 API URL",
+        value=st.session_state.api_url,
+        placeholder="https://quasarmarket.coforge.com/...",
+        help="LLM Router endpoint URL",
+    )
+    if api_url != st.session_state.api_url:
+        st.session_state.api_url = api_url
+
     api_key = st.text_input(
-        "🔑 Anthropic API Key",
+        "🔑 X-API-KEY",
         value=st.session_state.api_key,
         type="password",
-        placeholder="sk-ant-...",
+        placeholder="your-api-key",
         help="Your key stays in your browser session only.",
     )
     if api_key != st.session_state.api_key:
         st.session_state.api_key = api_key
 
+    model_name = st.text_input(
+        "🤖 Model Name",
+        value=st.session_state.model_name,
+        placeholder="gpt-5-2",
+        help="Model name as configured in LLM Router",
+    )
+    if model_name != st.session_state.model_name:
+        st.session_state.model_name = model_name
+
     if not st.session_state.api_key:
-        st.warning("Set API key to enable conversion & chat.", icon="⚠️")
+        st.warning("Set X-API-KEY to enable conversion & chat.", icon="⚠️")
 
     st.divider()
 
@@ -204,7 +230,7 @@ if not st.session_state.active_project:
     steps = [
         ("📁", "Upload", "Foundry .py files"),
         ("🔍", "RAG Index", "Chunk & analyze"),
-        ("🤖", "AI Convert", "Claude API"),
+        ("🤖", "AI Convert", "LLM Router"),
         ("📦", "Output", "Databricks notebooks"),
     ]
     for col, (icon, title, desc) in zip(cols, steps):
@@ -285,7 +311,7 @@ with tab_arch:
                     <div style="background: linear-gradient(135deg, #0032A0, #1a4fbd); color: white; padding: 28px 24px; border-radius: 10px; text-align: center; width: 180px; margin-top: 30px; box-shadow: 0 4px 12px rgba(0,50,160,0.3);">
                         <div style="font-weight: 700; font-size: 14px;">GenAI / Agent</div>
                         <div style="font-weight: 700; font-size: 14px;">Application</div>
-                        <div style="font-size: 10px; opacity: 0.8; margin-top: 4px;">Claude API</div>
+                        <div style="font-size: 10px; opacity: 0.8; margin-top: 4px;">LLM API</div>
                     </div>
                     <div style="font-size: 10px; color: #6b7280; margin-top: 6px;">Conversion + RAG Chat</div>
                 </div>
@@ -381,7 +407,7 @@ with tab_arch:
         "AWS Redshift": "Cloud data warehouse for fast SQL analytics. BI tools connect here",
         "ICON Framework": "UAL's governance framework — Ingest, Catalog, Optimize, Notify",
         "MARS": "UAL's AI/ML platform on AWS Bedrock — runs production LLM models",
-        "Claude API": "Anthropic's AI — powers code conversion and RAG chat in this tool",
+        "LLM Router": "Coforge QuasarMarket AI gateway — powers code conversion and RAG chat in this tool",
     }
 
     for tech, desc in tech_stack.items():
@@ -562,10 +588,10 @@ with tab_convert:
 
             # Convert button
             if not st.session_state.api_key:
-                st.warning("Set your Anthropic API key in the sidebar to convert.", icon="🔑")
+                st.warning("Set your X-API-KEY in the sidebar to convert.", icon="🔑")
             else:
-                if st.button("🚀 Convert with Claude AI", type="primary", use_container_width=True):
-                    with st.spinner("Converting with Claude AI... This may take 15–30 seconds."):
+                if st.button("🚀 Convert with AI", type="primary", use_container_width=True):
+                    with st.spinner("Converting with AI... This may take 15–30 seconds."):
                         try:
                             # Prepare imported files context
                             imported_context = [
@@ -574,7 +600,9 @@ with tab_convert:
                             ]
 
                             converted_code = convert_file(
+                                api_url=st.session_state.api_url,
                                 api_key=st.session_state.api_key,
+                                model=st.session_state.model_name,
                                 file_path=selected_fp,
                                 file_content=project_files[selected_fp],
                                 target_layer=target_layer,
@@ -750,7 +778,7 @@ with tab_chat:
     if not project_files:
         st.info("Upload files first in the Files tab to enable Ask AI.")
     elif not st.session_state.api_key:
-        st.warning("Set your Anthropic API key in the sidebar to use Ask AI.", icon="🔑")
+        st.warning("Set your X-API-KEY in the sidebar to use Ask AI.", icon="🔑")
     else:
         st.subheader("Ask AI About Your Code")
         st.caption("Questions are answered using RAG — only your uploaded code is used as context.")
@@ -781,12 +809,14 @@ with tab_chat:
                 for m in st.session_state.chat_history[:-1]  # exclude current message
             ]
 
-            # Call Claude
+            # Call LLM
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     try:
                         response = chat_with_code(
+                            api_url=st.session_state.api_url,
                             api_key=st.session_state.api_key,
+                            model=st.session_state.model_name,
                             message=prompt,
                             chunks=chunks,
                             history=api_history,
