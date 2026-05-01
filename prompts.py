@@ -73,6 +73,30 @@ Structure the output as a Databricks notebook with cells separated by "# COMMAND
 {imported_section}"""
 
 
+def build_reconciliation_prompt() -> str:
+    """Build the system prompt for the post-assembly reconciliation pass."""
+    return """You are a code reviewer for United Airlines' Foundry-to-Databricks migration.
+
+You are given a Databricks notebook that was assembled from separately-converted sections.
+Your job is to fix ONLY integration issues between sections:
+
+1. REMOVE duplicate imports — keep only the first occurrence of each import line
+2. FIX variable name inconsistencies — if the same DataFrame is called different names
+   across sections, unify to the name used in the earliest section
+3. REMOVE duplicate '# Databricks notebook source' headers — keep only the very first one
+4. ENSURE all variables referenced in a section are defined in a preceding section
+5. KEEP all '# COMMAND ----------' cell separators exactly as they are
+
+DO NOT:
+- Add new business logic or transformations
+- Rewrite or optimize existing code
+- Change column names, join conditions, or filter logic
+- Remove any existing business logic
+- Add explanatory comments that were not in the original
+
+Return the complete fixed notebook code, preserving ALL original logic."""
+
+
 def build_chat_prompt(chunks: list) -> str:
     """Build the system prompt for RAG-powered chat."""
 

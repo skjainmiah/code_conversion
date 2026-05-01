@@ -2,11 +2,12 @@
 
 Handles large files by splitting into logical sections (function/class boundaries),
 converting each section separately with shared context, and reassembling.
+Includes a reconciliation pass and syntax validation for correctness.
 """
 
 import re
 import requests
-from prompts import build_conversion_prompt, build_chat_prompt
+from prompts import build_conversion_prompt, build_chat_prompt, build_reconciliation_prompt
 
 # Approx 1 token = 4 chars. Stay under safe limits.
 MAX_LINES_SINGLE_SHOT = 200  # ~800 tokens of code — safe for single conversion
@@ -179,6 +180,46 @@ def _extract_func_name(line: str) -> str:
     return ""
 
 
+def _build_file_outline(sections: list[dict]) -> str:
+    """Build a compact outline of the full file: function signatures, class names,
+    module-level variables. This is sent with every section so the LLM knows
+    what the rest of the file contains."""
+    outline_parts = []
+    for s in sections:
+        lines = s["code"].split("\n")
+        for line in lines:
+            stripped = line.strip()
+            # Capture function/class definitions
+            if re.match(r"^(def |class |@transform|@configure)", stripped):
+                outline_parts.append(stripped)
+            # Capture top-level variable assignments (not inside functions)
+            elif re.match(r"^[A-Za-z_]\w*\s*=\s*", line) and not line.startswith(" "):
+                # Truncate long assignments
+                outline_parts.append(line[:120].strip())
+    return "\n".join(outline_parts)
+
+
+def _validate_syntax(code: str) -> list[str]:
+    """Check if the assembled code is valid Python. Returns list of error messages."""
+    # Strip Databricks-specific lines that aren't valid Python on their own
+    clean_lines = []
+    for line in code.split("\n"):
+        stripped = line.strip()
+        if stripped == "# Databricks notebook source":
+            continue
+        if re.match(r"^#\s*COMMAND\s*-{5,}", stripped):
+            continue
+        clean_lines.append(line)
+
+    clean_code = "\n".join(clean_lines)
+    errors = []
+    try:
+        compile(clean_code, "<converted>", "exec")
+    except SyntaxError as e:
+        errors.append(f"Line {e.lineno}: {e.msg}")
+    return errors
+
+
 def _ensure_notebook_header(code: str) -> str:
     """Ensure converted code starts with the Databricks notebook source header."""
     header = "# Databricks notebook source"
@@ -237,38 +278,52 @@ def convert_file(
         return _ensure_notebook_header(code)
 
     # ── Chunked conversion: large file ──
-    total = len(sections)
+    # +2 for reconciliation pass and syntax check
+    total_steps = len(sections) + 2
     converted_sections = []
+
+    # Build a compact outline of the entire file so each section knows
+    # what functions, classes, and variables exist in other sections
+    file_outline = _build_file_outline(sections)
 
     # Extract imports section for shared context
     imports_section = ""
     if sections and sections[0]["name"] == "imports_and_constants":
         imports_section = sections[0]["code"]
 
+    # Build section table of contents for the LLM
+    section_toc = "\n".join(
+        f"  Section {i+1}: {s['name']} (lines {s['start_line']}-{s['end_line']})"
+        for i, s in enumerate(sections)
+    )
+
     for i, section in enumerate(sections):
         if progress_callback:
-            progress_callback(i + 1, total, section["name"])
+            progress_callback(i + 1, total_steps, section["name"])
 
         if section["name"] == "imports_and_constants":
-            # Convert the imports/header section
             user_message = (
                 f"Convert ONLY the imports and constants section of this Foundry file to Databricks format.\n"
-                f"This is section 1 of {total} from file: {file_path}\n"
+                f"This is section 1 of {len(sections)} from file: {file_path}\n"
                 f"Replace Foundry imports with PySpark equivalents. Keep all constants.\n"
                 f"Add the Databricks notebook header cell.\n\n"
                 f"```python\n{section['code']}\n```"
             )
         else:
-            # Convert a function/logic section — include imports as context
             user_message = (
                 f"Convert ONLY the following section of a Foundry Python file to Databricks format.\n"
-                f"This is section {i + 1} of {total} from file: {file_path} "
-                f"(lines {section['start_line']}–{section['end_line']}).\n"
+                f"This is section {i + 1} of {len(sections)} from file: {file_path} "
+                f"(lines {section['start_line']}-{section['end_line']}).\n"
                 f"Section name: {section['name']}\n\n"
+                f"FILE STRUCTURE (all sections):\n{section_toc}\n\n"
+                f"FILE OUTLINE (all function signatures, classes, variables):\n"
+                f"```\n{file_outline}\n```\n\n"
                 f"IMPORTANT:\n"
                 f"- Convert ONLY this section, not the whole file\n"
                 f"- Do NOT add imports or headers (already handled in section 1)\n"
                 f"- Do NOT add notebook header or validation cells\n"
+                f"- Keep ALL variable names exactly as they appear in the outline above\n"
+                f"- Do NOT rename any variables, DataFrames, or function parameters\n"
                 f"- Separate cells with '# COMMAND ----------'\n"
                 f"- Preserve ALL business logic exactly\n\n"
             )
@@ -290,6 +345,49 @@ def convert_file(
 
     # Ensure Databricks notebook source header is present
     assembled = _ensure_notebook_header(assembled)
+
+    # ── Reconciliation pass: fix inconsistencies across sections ──
+    if progress_callback:
+        progress_callback(len(sections) + 1, total_steps, "reconciliation")
+
+    reconciliation_prompt = build_reconciliation_prompt()
+    reconcile_message = (
+        f"Review and fix the following assembled Databricks notebook that was converted "
+        f"from {len(sections)} separate sections of a Foundry file ({file_path}).\n\n"
+        f"The original file's outline was:\n```\n{file_outline}\n```\n\n"
+        f"Fix ONLY these issues if present:\n"
+        f"1. Remove duplicate import lines (keep only the first occurrence of each import)\n"
+        f"2. Fix inconsistent variable names (if a DataFrame is named 'df' in one section "
+        f"and 'df_cleaned' in another for the same data, unify to the original name)\n"
+        f"3. Remove duplicate '# Databricks notebook source' headers (keep only the first)\n"
+        f"4. Ensure all referenced variables are defined somewhere above their usage\n"
+        f"5. Do NOT add new business logic, do NOT change transformations, do NOT rewrite code\n\n"
+        f"Return the COMPLETE fixed notebook:\n\n```python\n{assembled}\n```"
+    )
+
+    try:
+        reconciled_text = call_llm(
+            api_url, api_key, model, reconciliation_prompt, reconcile_message, max_tokens=16384
+        )
+        reconciled = _extract_code(reconciled_text)
+        if reconciled and len(reconciled) > len(assembled) * 0.5:
+            assembled = _ensure_notebook_header(reconciled)
+    except Exception:
+        # If reconciliation fails, use the assembled version as-is
+        pass
+
+    # ── Syntax validation ──
+    if progress_callback:
+        progress_callback(len(sections) + 2, total_steps, "syntax check")
+
+    syntax_errors = _validate_syntax(assembled)
+    if syntax_errors:
+        # Append syntax warnings as a comment at the end
+        assembled += "\n\n# COMMAND ----------\n\n"
+        assembled += "# WARNING: Syntax issues detected in assembled output.\n"
+        assembled += "# Please review and fix before running:\n"
+        for err in syntax_errors:
+            assembled += f"#   {err}\n"
 
     return assembled
 

@@ -628,8 +628,12 @@ with tab_convert:
                         progress_bar.progress(100)
                         status_text.text("Conversion complete!")
 
-                        # Validate
+                        # Validate for unconverted APIs
                         issues = validate_conversion(converted_code)
+
+                        # Syntax check
+                        from converter import _validate_syntax
+                        syntax_errors = _validate_syntax(converted_code)
 
                         # Store result
                         conv_id = str(uuid.uuid4())
@@ -645,11 +649,15 @@ with tab_convert:
                             "converted_code": converted_code,
                             "status": "done",
                             "issues": issues,
+                            "syntax_errors": syntax_errors,
                             "imported_files": imports,
                             "converted_at": datetime.now().isoformat(),
                         }
 
-                        st.success(f"Conversion complete! {len(issues)} issue(s) found.")
+                        if syntax_errors:
+                            st.warning(f"Conversion complete with {len(syntax_errors)} syntax issue(s). Review before running.")
+                        else:
+                            st.success(f"Conversion complete. {len(issues)} unconverted API(s) found.")
 
                     except Exception as e:
                         progress_bar.empty()
@@ -682,17 +690,26 @@ with tab_convert:
                 st.divider()
                 st.subheader("Conversion Result")
 
-                # Validation issues
+                # Syntax validation
+                syntax_errs = latest.get("syntax_errors", [])
+                if syntax_errs:
+                    st.error(f"{len(syntax_errs)} syntax error(s) in converted code:")
+                    for err in syntax_errs:
+                        st.markdown(f'<div class="issue-box"><code>{err}</code></div>', unsafe_allow_html=True)
+                else:
+                    st.success("Syntax check passed.")
+
+                # Unconverted API issues
                 if latest["issues"]:
                     st.warning(f"{len(latest['issues'])} unconverted API(s) detected:")
                     for issue in latest["issues"]:
                         st.markdown(
                             f'<div class="issue-box"><b>Line {issue.line_number}:</b> '
-                            f'<code>{issue.pattern}</code> — <code>{issue.line}</code></div>',
+                            f'<code>{issue.pattern}</code> -- <code>{issue.line}</code></div>',
                             unsafe_allow_html=True,
                         )
-                else:
-                    st.success("All Foundry APIs successfully converted!")
+                elif not syntax_errs:
+                    st.success("All Foundry APIs successfully converted.")
 
                 # Side-by-side
                 col_orig, col_conv = st.columns(2)

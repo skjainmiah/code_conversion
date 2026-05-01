@@ -11,7 +11,7 @@ import traceback
 
 from rag_engine import KeywordIndex, chunk_file
 from import_resolver import resolve_imports, build_dependency_graph, parse_imports
-from converter import _split_into_sections, _extract_code, _ensure_notebook_header
+from converter import _split_into_sections, _extract_code, _ensure_notebook_header, _build_file_outline, _validate_syntax
 from validator import validate_conversion
 from notebook_formatter import code_to_notebook
 
@@ -2003,8 +2003,72 @@ def run_tests():
         assert result.count("# Databricks notebook source") == 1
     test("header not duplicated when present", test_header_not_duplicated)
 
-    # ── Test 9: File Removal from Index ──
-    print("\n[9] Index File Removal")
+    # ── Test 9: File Outline (Cross-Section Context) ──
+    print("\n[9] File Outline for Cross-Section Context")
+
+    def test_outline_captures_functions():
+        sections = _split_into_sections(SYNTHETIC_FILES["transforms/silver/cleaned_flights.py"])
+        outline = _build_file_outline(sections)
+        assert "def compute" in outline, "Outline should capture function definitions"
+    test("outline captures function definitions", test_outline_captures_functions)
+
+    def test_outline_captures_decorators():
+        sections = _split_into_sections(SYNTHETIC_FILES["transforms/bronze/raw_flight_ingest.py"])
+        outline = _build_file_outline(sections)
+        assert "@transform" in outline or "@configure" in outline, "Outline should capture decorators"
+    test("outline captures decorators", test_outline_captures_decorators)
+
+    def test_outline_captures_classes():
+        sections = _split_into_sections(SYNTHETIC_FILES["transforms/shared_utils.py"])
+        outline = _build_file_outline(sections)
+        assert "class DataQualityChecker" in outline, "Outline should capture class definitions"
+    test("outline captures class definitions", test_outline_captures_classes)
+
+    # ── Test 10: Syntax Validation ──
+    print("\n[10] Syntax Validation")
+
+    def test_valid_syntax():
+        code = "x = 1\ny = x + 2\nprint(y)"
+        errors = _validate_syntax(code)
+        assert len(errors) == 0, f"Valid code should have no errors: {errors}"
+    test("valid code passes syntax check", test_valid_syntax)
+
+    def test_invalid_syntax():
+        code = "def foo(\n    x = 1\nprint(x"
+        errors = _validate_syntax(code)
+        assert len(errors) > 0, "Invalid code should have syntax errors"
+    test("invalid code detected", test_invalid_syntax)
+
+    def test_syntax_ignores_notebook_markers():
+        code = "# Databricks notebook source\n\n# COMMAND ----------\n\nx = 1\n\n# COMMAND ----------\n\nprint(x)"
+        errors = _validate_syntax(code)
+        assert len(errors) == 0, f"Notebook markers should be stripped: {errors}"
+    test("notebook markers stripped before syntax check", test_syntax_ignores_notebook_markers)
+
+    def test_syntax_on_real_converted_output():
+        # Simulate a well-formed conversion output
+        code = (
+            "# Databricks notebook source\n\n"
+            "# COMMAND ----------\n\n"
+            "from pyspark.sql import functions as F\n\n"
+            "# COMMAND ----------\n\n"
+            "input_path = 's3://ual-udh3-bronze-bucket/flights'\n"
+            "output_path = 's3://ual-udh3-silver-bucket/cleaned_flights'\n\n"
+            "# COMMAND ----------\n\n"
+            "df = spark.read.format('delta').load(input_path)\n"
+            "df = df.filter(F.col('status') != 'DELETED')\n"
+            "df = df.withColumn('flight_id', F.upper(F.col('flight_id')))\n\n"
+            "# COMMAND ----------\n\n"
+            "df.write.format('delta').mode('overwrite').save(output_path)\n\n"
+            "# COMMAND ----------\n\n"
+            "print(f'Rows: {df.count()}')\n"
+        )
+        errors = _validate_syntax(code)
+        assert len(errors) == 0, f"Well-formed notebook should pass: {errors}"
+    test("realistic converted output passes syntax check", test_syntax_on_real_converted_output)
+
+    # ── Test 11: File Removal from Index ──
+    print("\n[11] Index File Removal")
 
     def test_remove_file():
         temp_index = KeywordIndex()
