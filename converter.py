@@ -179,6 +179,14 @@ def _extract_func_name(line: str) -> str:
     return ""
 
 
+def _ensure_notebook_header(code: str) -> str:
+    """Ensure converted code starts with the Databricks notebook source header."""
+    header = "# Databricks notebook source"
+    if not code.strip().startswith(header):
+        code = header + "\n\n# COMMAND ----------\n\n" + code
+    return code
+
+
 # ─── Main Convert Function ──────────────────────────────────────────────────────
 
 
@@ -225,7 +233,8 @@ def convert_file(
             f"File: {file_path}\n\n```python\n{file_content}\n```"
         )
         text = call_llm(api_url, api_key, model, system_prompt, user_message, max_tokens=8192)
-        return _extract_code(text)
+        code = _extract_code(text)
+        return _ensure_notebook_header(code)
 
     # ── Chunked conversion: large file ──
     total = len(sections)
@@ -278,6 +287,9 @@ def convert_file(
     if "print(" not in converted_sections[-1].lower():
         assembled += "\n\n# COMMAND ----------\n\n"
         assembled += '# Validation\nprint(f"Conversion complete for: {file_path}")\n'
+
+    # Ensure Databricks notebook source header is present
+    assembled = _ensure_notebook_header(assembled)
 
     return assembled
 

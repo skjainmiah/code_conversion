@@ -13,6 +13,7 @@ from rag_engine import KeywordIndex, chunk_file
 from import_resolver import resolve_imports, build_dependency_graph
 from converter import convert_file, chat_with_code
 from validator import validate_conversion
+from notebook_formatter import code_to_notebook
 
 # Load .env if present
 load_dotenv(override=True)
@@ -718,12 +719,17 @@ with tab_output:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 for conv in completed:
-                    out_name = conv["file_path"].replace(".py", "_databricks.py")
-                    zf.writestr(out_name, conv["converted_code"])
+                    out_name = conv["file_path"].replace(".py", ".ipynb")
+                    nb_json = code_to_notebook(
+                        conv["converted_code"],
+                        file_path=conv["file_path"],
+                        target_layer=conv.get("target_layer", ""),
+                    )
+                    zf.writestr(out_name, nb_json)
             zip_buffer.seek(0)
 
             st.download_button(
-                "📦 Download All as ZIP",
+                "📦 Download All Notebooks as ZIP",
                 data=zip_buffer.getvalue(),
                 file_name="converted_notebooks.zip",
                 mime="application/zip",
@@ -755,14 +761,19 @@ with tab_output:
                 if conv["status"] == "done":
                     bcol1, bcol2 = st.columns(2)
                     with bcol1:
-                        out_name = conv["file_path"].replace(".py", "_databricks.py")
+                        out_name = conv["file_path"].replace(".py", ".ipynb")
+                        nb_json = code_to_notebook(
+                            conv["converted_code"],
+                            file_path=conv["file_path"],
+                            target_layer=conv.get("target_layer", ""),
+                        )
                         st.download_button(
                             "⬇️",
-                            data=conv["converted_code"],
+                            data=nb_json,
                             file_name=out_name,
-                            mime="text/x-python",
+                            mime="application/x-ipynb+json",
                             key=f"dl_{conv_id}",
-                            help="Download converted file",
+                            help="Download as Databricks notebook",
                         )
                     with bcol2:
                         if st.button("👁", key=f"view_{conv_id}", help="View side-by-side"):
