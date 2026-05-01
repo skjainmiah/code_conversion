@@ -145,13 +145,13 @@ def get_project_conversions() -> dict:
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("### ✈️ UAL Code Converter")
-    st.caption("Foundry → Databricks Migration")
+    st.markdown("### UAL Code Converter")
+    st.caption("Foundry to Databricks Migration")
     st.divider()
 
     # LLM API Config
     api_url = st.text_input(
-        "🌐 API URL",
+        "API URL",
         value=st.session_state.api_url,
         placeholder="https://quasarmarket.coforge.com/...",
         help="LLM Router endpoint URL",
@@ -160,7 +160,7 @@ with st.sidebar:
         st.session_state.api_url = api_url
 
     api_key = st.text_input(
-        "🔑 X-API-KEY",
+        "X-API-KEY",
         value=st.session_state.api_key,
         type="password",
         placeholder="your-api-key",
@@ -170,7 +170,7 @@ with st.sidebar:
         st.session_state.api_key = api_key
 
     model_name = st.text_input(
-        "🤖 Model Name",
+        "Model",
         value=st.session_state.model_name,
         placeholder="gpt-5-2",
         help="Model name as configured in LLM Router",
@@ -179,14 +179,14 @@ with st.sidebar:
         st.session_state.model_name = model_name
 
     if not st.session_state.api_key:
-        st.warning("Set X-API-KEY to enable conversion & chat.", icon="⚠️")
+        st.warning("Set X-API-KEY to enable conversion and chat.")
 
     st.divider()
 
     # Projects
     st.markdown("**Projects**")
     new_name = st.text_input("New project name", placeholder="e.g., UAL-AirOps", label_visibility="collapsed")
-    if st.button("➕ Create Project", use_container_width=True, disabled=not new_name.strip()):
+    if st.button("Create Project", use_container_width=True, disabled=not new_name.strip()):
         pid = str(uuid.uuid4())
         st.session_state.projects[pid] = {
             "name": new_name.strip(),
@@ -205,7 +205,7 @@ with st.sidebar:
                 st.session_state.chat_history = []
                 st.rerun()
         with col2:
-            if st.button("🗑", key=f"del_{pid}", help="Delete project"):
+            if st.button("X", key=f"del_{pid}", help="Delete project"):
                 st.session_state.projects.pop(pid, None)
                 st.session_state.files.pop(pid, None)
                 st.session_state.indexes.pop(pid, None)
@@ -229,20 +229,20 @@ if not st.session_state.active_project:
 
     cols = st.columns(4)
     steps = [
-        ("📁", "Upload", "Foundry .py files"),
-        ("🔍", "RAG Index", "Chunk & analyze"),
-        ("🤖", "AI Convert", "LLM Router"),
-        ("📦", "Output", "Databricks notebooks"),
+        ("1", "Upload", "Foundry .py files"),
+        ("2", "Index", "Chunk and analyze"),
+        ("3", "Convert", "AI-powered conversion"),
+        ("4", "Download", "Databricks notebooks"),
     ]
-    for col, (icon, title, desc) in zip(cols, steps):
+    for col, (step_num, title, desc) in zip(cols, steps):
         with col:
             st.markdown(
-                f'<div class="stat-card"><div class="number">{icon}</div>'
+                f'<div class="stat-card"><div class="number">{step_num}</div>'
                 f'<div class="label"><b>{title}</b><br>{desc}</div></div>',
                 unsafe_allow_html=True,
             )
 
-    st.info("👈 Create a project in the sidebar to get started.", icon="ℹ️")
+    st.info("Create a project in the sidebar to get started.")
     st.stop()
 
 # ─── Active Project ─────────────────────────────────────────────────────────────
@@ -256,7 +256,7 @@ st.markdown(
 )
 
 tab_arch, tab_files, tab_convert, tab_output, tab_chat = st.tabs(
-    ["🏗️ Architecture", "📁 Files", "🔄 Convert", "📦 Output", "💬 Ask AI"]
+    ["Architecture", "Files", "Convert", "Output", "Ask AI"]
 )
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -265,7 +265,7 @@ tab_arch, tab_files, tab_convert, tab_output, tab_chat = st.tabs(
 
 with tab_arch:
     st.subheader("Standalone RAG Agent: Architecture")
-    st.caption("UAL MARS Platform Pattern — Code Conversion Application")
+    st.caption("UAL MARS Platform Pattern  |  Code Conversion Application")
 
     # Architecture diagram using HTML/CSS matching the reference PNG
     st.markdown(
@@ -276,14 +276,14 @@ with tab_arch:
                 <!-- User -->
                 <div style="display: flex; flex-direction: column; align-items: center; margin-top: 50px; min-width: 80px;">
                     <div style="width: 50px; height: 50px; background: #1a1a2e; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                        <span style="font-size: 24px;">👤</span>
+                        <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
                     </div>
                     <span style="font-size: 11px; color: #6b7280; margin-top: 6px; font-weight: 600;">User</span>
                 </div>
 
                 <!-- Arrow -->
                 <div style="display: flex; align-items: center; margin-top: 65px; padding: 0 8px;">
-                    <span style="font-size: 22px; color: #374151;">→</span>
+                    <span style="font-size: 18px; color: #374151;">&rarr;</span>
                 </div>
 
                 <!-- Web Application -->
@@ -331,7 +331,9 @@ with tab_arch:
 
                 <!-- MCP Tools icon -->
                 <div style="display: flex; flex-direction: column; align-items: center; margin-top: 40px; min-width: 80px;">
-                    <div style="font-size: 40px;">🔗</div>
+                    <div style="width: 50px; height: 50px; background: #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                        <svg width="24" height="24" fill="#374151" viewBox="0 0 24 24"><path d="M3.9 12c0-1.7 1.4-3.1 3.1-3.1h4V7H7C4.2 7 2 9.2 2 12s2.2 5 5 5h4v-1.9H7c-1.7 0-3.1-1.4-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.7 0 3.1 1.4 3.1 3.1s-1.4 3.1-3.1 3.1h-4V17h4c2.8 0 5-2.2 5-5s-2.2-5-5-5z"/></svg>
+                    </div>
                     <span style="font-size: 10px; color: #6b7280; font-weight: 600; margin-top: 4px;">MCP Tools</span>
                 </div>
             </div>
@@ -358,8 +360,10 @@ with tab_arch:
 
                 <!-- Vector Store -->
                 <div style="display: flex; flex-direction: column; align-items: center; min-width: 140px;">
-                    <div style="font-size: 40px;">🗄️</div>
-                    <div style="font-weight: 700; font-size: 13px; color: #1a1a2e;">Milvus Vector Store</div>
+                    <div style="width: 50px; height: 50px; background: #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                        <svg width="24" height="24" fill="#374151" viewBox="0 0 24 24"><path d="M4 20h16v-2H4v2zm0-4h16v-2H4v2zm0-4h16v-2H4v2zm0-4h16V6H4v2z"/></svg>
+                    </div>
+                    <div style="font-weight: 700; font-size: 13px; color: #1a1a2e;">Vector Store</div>
                     <div style="font-size: 10px; color: #6b7280;">RAG Index</div>
                 </div>
 
@@ -421,7 +425,7 @@ with tab_arch:
     with col_b:
         st.markdown(
             '<div class="stat-card">'
-            '<div class="number" style="color: #9a3412;">🟤</div>'
+            '<div class="number" style="color: #9a3412;">B</div>'
             '<div class="label"><b>Bronze — Raw Zone</b><br>'
             'Data lands exactly as it came from source. No changes, no cleaning. Audit trail.</div></div>',
             unsafe_allow_html=True,
@@ -429,7 +433,7 @@ with tab_arch:
     with col_s:
         st.markdown(
             '<div class="stat-card">'
-            '<div class="number" style="color: #374151;">⚪</div>'
+            '<div class="number" style="color: #374151;">S</div>'
             '<div class="label"><b>Silver — Cleaned Zone</b><br>'
             'Cleaned, validated, standardised. Duplicates removed, nulls handled, types fixed.</div></div>',
             unsafe_allow_html=True,
@@ -437,9 +441,9 @@ with tab_arch:
     with col_g:
         st.markdown(
             '<div class="stat-card">'
-            '<div class="number" style="color: #92400e;">🟡</div>'
+            '<div class="number" style="color: #92400e;">G</div>'
             '<div class="label"><b>Gold — Business Zone</b><br>'
-            'Aggregated for business use cases. Pre-joined, pre-calculated. Ready for BI + MARS.</div></div>',
+            'Aggregated for business use cases. Pre-joined, pre-calculated. Ready for BI and MARS.</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -542,7 +546,7 @@ with tab_files:
             col1.markdown(f"**{info['file_name']}**")
             col2.caption(fp)
             col3.markdown('<span class="badge badge-green">indexed</span>', unsafe_allow_html=True)
-            if col4.button("🗑", key=f"delf_{fp}", help="Remove file"):
+            if col4.button("X", key=f"delf_{fp}", help="Remove file"):
                 idx = get_index()
                 idx.remove_file(info["id"])
                 del st.session_state.files[st.session_state.active_project][fp]
@@ -565,13 +569,13 @@ with tab_convert:
 
         if selected_fp:
             # Show file preview
-            with st.expander("📄 Preview source code", expanded=False):
+            with st.expander("Preview source code", expanded=False):
                 st.code(project_files[selected_fp], language="python", line_numbers=True)
 
             # Resolve imports
             imports = resolve_imports(selected_fp, project_files)
             if imports:
-                st.info(f"🔗 **{len(imports)} imported file(s)** will be included as context:")
+                st.info(f"**{len(imports)} imported file(s)** will be included as context:")
                 for imp in imports:
                     st.markdown(f"- `{imp}`")
             else:
@@ -584,14 +588,14 @@ with tab_convert:
                     "Target Layer",
                     ["bronze", "silver", "gold"],
                     index=1,
-                    format_func=lambda x: {"bronze": "🟤 Bronze (Raw)", "silver": "⚪ Silver (Cleaned)", "gold": "🟡 Gold (Business)"}[x],
+                    format_func=lambda x: {"bronze": "Bronze (Raw)", "silver": "Silver (Cleaned)", "gold": "Gold (Business)"}[x],
                 )
 
             # Convert button
             if not st.session_state.api_key:
-                st.warning("Set your X-API-KEY in the sidebar to convert.", icon="🔑")
+                st.warning("Set your X-API-KEY in the sidebar to convert.")
             else:
-                if st.button("🚀 Convert with AI", type="primary", use_container_width=True):
+                if st.button("Convert", type="primary", use_container_width=True):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     status_text.text("Preparing conversion...")
@@ -680,7 +684,7 @@ with tab_convert:
 
                 # Validation issues
                 if latest["issues"]:
-                    st.warning(f"⚠️ {len(latest['issues'])} unconverted API(s) detected:")
+                    st.warning(f"{len(latest['issues'])} unconverted API(s) detected:")
                     for issue in latest["issues"]:
                         st.markdown(
                             f'<div class="issue-box"><b>Line {issue.line_number}:</b> '
@@ -729,7 +733,7 @@ with tab_output:
             zip_buffer.seek(0)
 
             st.download_button(
-                "📦 Download All Notebooks as ZIP",
+                "Download All Notebooks (.zip)",
                 data=zip_buffer.getvalue(),
                 file_name="converted_notebooks.zip",
                 mime="application/zip",
@@ -751,9 +755,9 @@ with tab_output:
 
             issue_count = len(conv.get("issues", []))
             if conv["status"] == "done" and issue_count > 0:
-                col4.markdown(f'<span class="badge badge-yellow">⚠️ {issue_count}</span>', unsafe_allow_html=True)
+                col4.markdown(f'<span class="badge badge-yellow">{issue_count} issues</span>', unsafe_allow_html=True)
             elif conv["status"] == "done":
-                col4.markdown('<span class="badge badge-green">✓ Clean</span>', unsafe_allow_html=True)
+                col4.markdown('<span class="badge badge-green">Clean</span>', unsafe_allow_html=True)
             else:
                 col4.write("")
 
@@ -768,7 +772,7 @@ with tab_output:
                             target_layer=conv.get("target_layer", ""),
                         )
                         st.download_button(
-                            "⬇️",
+                            ".ipynb",
                             data=nb_json,
                             file_name=out_name,
                             mime="application/x-ipynb+json",
@@ -776,14 +780,14 @@ with tab_output:
                             help="Download as Databricks notebook",
                         )
                     with bcol2:
-                        if st.button("👁", key=f"view_{conv_id}", help="View side-by-side"):
+                        if st.button("View", key=f"view_{conv_id}", help="View side-by-side"):
                             st.session_state[f"view_conv_{conv_id}"] = True
 
             # Expandable side-by-side view
             if st.session_state.get(f"view_conv_{conv_id}"):
-                with st.expander(f"📄 {conv['file_path']} — Side by Side", expanded=True):
+                with st.expander(f"{conv['file_path']} — Side by Side", expanded=True):
                     if conv.get("issues"):
-                        st.warning(f"⚠️ {len(conv['issues'])} unconverted API(s):")
+                        st.warning(f"{len(conv['issues'])} unconverted API(s):")
                         for issue in conv["issues"]:
                             st.caption(f"Line {issue.line_number}: `{issue.pattern}` — `{issue.line}`")
 
@@ -805,7 +809,7 @@ with tab_chat:
     if not project_files:
         st.info("Upload files first in the Files tab to enable Ask AI.")
     elif not st.session_state.api_key:
-        st.warning("Set your X-API-KEY in the sidebar to use Ask AI.", icon="🔑")
+        st.warning("Set your X-API-KEY in the sidebar to use Ask AI.")
     else:
         st.subheader("Ask AI About Your Code")
         st.caption("Questions are answered using RAG — only your uploaded code is used as context.")
@@ -815,7 +819,7 @@ with tab_chat:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 if msg.get("chunks"):
-                    with st.expander("📎 Source chunks used"):
+                    with st.expander("Source chunks used"):
                         for chunk in msg["chunks"]:
                             st.caption(f"`{chunk.file_path}` lines {chunk.start_line}–{chunk.end_line} (score: {chunk.score:.2f})")
 
@@ -851,7 +855,7 @@ with tab_chat:
                         st.markdown(response)
 
                         if chunks:
-                            with st.expander("📎 Source chunks used"):
+                            with st.expander("Source chunks used"):
                                 for chunk in chunks:
                                     st.caption(
                                         f"`{chunk.file_path}` lines {chunk.start_line}–{chunk.end_line} (score: {chunk.score:.2f})"
@@ -873,6 +877,6 @@ with tab_chat:
 
         # Clear chat button
         if st.session_state.chat_history:
-            if st.button("🗑 Clear Chat"):
+            if st.button("Clear Chat"):
                 st.session_state.chat_history = []
                 st.rerun()
